@@ -1,0 +1,105 @@
+name: Database Migration Validation
+
+on:
+  pull_request:
+    paths:
+      - 'packages/db/prisma/**'
+      - 'supabase/migrations/**'
+      - '.github/workflows/db-migration.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/db/prisma/**'
+      - 'supabase/migrations/**'
+
+jobs:
+  validate-migration:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15.1
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install
+        working-directory: packages/db
+
+      - name: Setup environment
+        run: |
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres" > .env
+        working-directory: packages/db
+
+      - name: Run migrations
+        run: pnpm run migrate:deploy
+        working-directory: packages/db
+
+      - name: Check migration status
+        run: pnpm run migrate:status
+        working-directory: packages/db
+
+      - name: Generate Prisma Client
+        run: pnpm run generate
+        working-directory: packages/db
+
+      - name: Test seed script
+        run: pnpm run seed
+        working-directory: packages/db
+
+      - name: Run migration tests
+        run: pnpm test
+        working-directory: packages/db
+
+  check-migration-sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Prisma and Supabase migrations sync
+        run: |
+          echo "Checking migration sync between Prisma and Supabase..."
+          
+          PRISMA_MIGRATIONS=$(ls packages/db/prisma/migrations | grep -v migration_lock.toml || true)
+          SUPABASE_MIGRATIONS=$(ls supabase/migrations | grep -v enable_rls || true)
+          
+          echo "Prisma migrations: $PRISMA_MIGRATIONS"
+          echo "Supabase migrations: $SUPABASE_MIGRATIONS"
+          
+          for migration in $PRISMA_MIGRATIONS; do
+            if [[ "$migration" =~ ^[0-9]{14}_ ]]; then
+              MIGRATION_NAME="${migration%.sql}"
+              if ! ls supabase/migrations | grep -q "$MIGRATION_NAME"; then
+                echo "❌ Migration $migration not found in Supabase migrations"
+                exit 1
+              fi
+            fi
+          done
+          
+          echo "✅ All Prisma migrations have corresponding Supabase migrations"

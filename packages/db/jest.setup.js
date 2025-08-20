@@ -1,0 +1,1 @@
+// Optional setup file for Jest - currently empty but available for future use

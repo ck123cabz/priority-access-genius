@@ -1,0 +1,87 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Foundation models for the priority access system
+model Client {
+  id              String       @id @default(uuid())
+  company_name    String
+  contact_name    String
+  email           String       @unique
+  role_title      String
+  notes           String?
+  logo_url        String?
+  status          String       @default("pending")
+  created_by      String
+  activation_token String?
+  token_expires_at DateTime?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  
+  // Relations
+  agreements   Agreement[]
+  audit_events AuditEvent[]
+  
+  @@index([created_by])
+  @@index([status])
+  @@index([activation_token])
+  @@map("clients")
+}
+
+model Agreement {
+  id             String   @id @default(uuid())
+  client_id      String
+  terms_version  String
+  pdf_url        String?
+  signed_at      DateTime
+  signer_name    String
+  signer_ip      String
+  signature_hash String
+  created_at     DateTime @default(now())
+  
+  // Relations
+  client         Client   @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  
+  @@index([client_id])
+  @@index([signed_at])
+  @@map("agreements")
+}
+
+model AuditEvent {
+  id         String   @id @default(uuid())
+  client_id  String
+  actor      String
+  action     String
+  payload    Json
+  created_at DateTime @default(now())
+  
+  // Relations
+  client     Client   @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  
+  @@index([client_id])
+  @@index([created_at])
+  @@index([actor])
+  @@map("audit_events")
+}
+
+model WebhookEndpoint {
+  id         String   @id @default(uuid())
+  url        String
+  secret     String
+  enabled    Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  
+  @@index([enabled])
+  @@map("webhook_endpoints")
+}
