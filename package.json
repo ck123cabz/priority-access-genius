@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
+    "vercel-build": "cd apps/web && npm install && npm run build",
     "start": "pnpm --filter web start",
     "lint": "pnpm --filter web lint",
     "test": "pnpm --filter web test",
@@ -23,6 +24,7 @@
   },
   "packageManager": "pnpm@8.0.0",
   "dependencies": {
-    "@supabase/supabase-js": "^2.55.0"
+    "@supabase/supabase-js": "^2.55.0",
+    "next": "14.2.32"
   }
 }
