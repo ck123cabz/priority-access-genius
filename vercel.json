@@ -13,16 +13,9 @@
   },
   "env": {
     "NODE_VERSION": "20",
-    "NEXT_PUBLIC_APP_URL": {
-      "production": "https://geniuspriorityaccess.com",
-      "preview": "https://staging.geniuspriorityaccess.com",
-      "development": "http://localhost:3000"
-    },
-    "NEXT_PUBLIC_ENVIRONMENT": {
-      "production": "production",
-      "preview": "staging",
-      "development": "development"
-    }
+    "NEXT_PUBLIC_SUPABASE_URL": "https://ajzwfyedjjsosrhqwfhf.supabase.co",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqendmeWVkampzb3NyaHF3ZmhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU2MjcyNDYsImV4cCI6MjA3MTIwMzI0Nn0.fO5thcPIbCgAfVIkDlLNLAgJJvY8mh-j3tVvqaPOWUA",
+    "NEXT_PUBLIC_ENVIRONMENT": "production"
   },
   "build": {
     "env": {
