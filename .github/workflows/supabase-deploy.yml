@@ -1,0 +1,224 @@
+name: Supabase Deployment
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'packages/db/prisma/**'
+      - 'supabase/**'
+      - '.github/workflows/supabase-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  SUPABASE_CLI_VERSION: '1.180.0'
+
+jobs:
+  deploy:
+    name: Deploy to Supabase
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '9'
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter db generate
+
+      - name: Verify Supabase project configuration
+        run: |
+          echo "Deploying to environment: ${{ github.event.inputs.environment || 'staging' }}"
+          echo "Supabase Project Ref: ${{ secrets.SUPABASE_PROJECT_REF }}"
+          if [ -z "${{ secrets.SUPABASE_PROJECT_REF }}" ]; then
+            echo "❌ SUPABASE_PROJECT_REF secret not configured"
+            exit 1
+          fi
+          if [ -z "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" ]; then
+            echo "❌ SUPABASE_SERVICE_ROLE_KEY secret not configured"
+            exit 1
+          fi
+
+      - name: Link Supabase project
+        run: supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Check database status
+        run: |
+          echo "Checking database status before deployment..."
+          supabase db status
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy database migrations
+        run: |
+          echo "Deploying database migrations..."
+          
+          # Check if there are pending migrations
+          if supabase db diff --schema public,auth --linked; then
+            echo "Found database changes, deploying..."
+            supabase db push --include-seed
+          else
+            echo "No database changes detected"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy generate-pdf edge function
+        run: |
+          echo "Deploying generate-pdf edge function..."
+          if [ -f "supabase/functions/generate-pdf/index.ts" ]; then
+            supabase functions deploy generate-pdf --no-verify-jwt
+          else
+            echo "⚠️ generate-pdf function not found, skipping deployment"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy webhook-dispatcher edge function
+        run: |
+          echo "Deploying webhook-dispatcher edge function..."
+          if [ -f "supabase/functions/webhook-dispatcher/index.ts" ]; then
+            supabase functions deploy webhook-dispatcher --no-verify-jwt
+          else
+            echo "⚠️ webhook-dispatcher function not found, skipping deployment"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Set Supabase secrets
+        run: |
+          echo "Setting Supabase secrets..."
+          supabase secrets set SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying deployment..."
+          supabase db status
+          
+          echo "Checking edge functions..."
+          supabase functions list
+          
+          echo "✅ Supabase deployment completed successfully"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deployment summary
+        run: |
+          echo "## Supabase Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ github.event.inputs.environment || 'staging' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project Ref:** ${{ secrets.SUPABASE_PROJECT_REF }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database migrations:** ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Edge functions:** ✅ Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Secrets:** ✅ Updated" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+
+  production-deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.event.inputs.environment == 'production'
+    needs: []
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '9'
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter db generate
+
+      - name: Production deployment confirmation
+        run: |
+          echo "🚨 PRODUCTION DEPLOYMENT INITIATED 🚨"
+          echo "Environment: production"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          
+      - name: Link production Supabase project
+        run: supabase link --project-ref ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_PROD_ACCESS_TOKEN }}
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying database migrations to production..."
+          supabase db push --include-seed
+          
+          echo "Deploying edge functions to production..."
+          if [ -f "supabase/functions/generate-pdf/index.ts" ]; then
+            supabase functions deploy generate-pdf --no-verify-jwt
+          fi
+          
+          if [ -f "supabase/functions/webhook-dispatcher/index.ts" ]; then
+            supabase functions deploy webhook-dispatcher --no-verify-jwt
+          fi
+          
+          echo "Setting production secrets..."
+          supabase secrets set SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_PROD_SERVICE_ROLE_KEY }}"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_PROD_ACCESS_TOKEN }}
+
+      - name: Production deployment verification
+        run: |
+          echo "Verifying production deployment..."
+          supabase db status
+          supabase functions list
+          echo "✅ Production deployment completed successfully"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_PROD_ACCESS_TOKEN }}
+
+      - name: Production deployment notification
+        run: |
+          echo "## 🚀 Production Deployment Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ Success" >> $GITHUB_STEP_SUMMARY

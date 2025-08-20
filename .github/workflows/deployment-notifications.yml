@@ -1,0 +1,372 @@
+name: Deployment Notifications
+
+on:
+  workflow_run:
+    workflows: ["Deployment Pipeline", "Supabase Deployment", "Vercel Deployment"]
+    types: [completed]
+  deployment_status: {}
+
+jobs:
+  notify-deployment-status:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion != 'cancelled'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine deployment context
+        id: context
+        run: |
+          WORKFLOW_NAME="${{ github.event.workflow_run.name }}"
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          
+          # Determine environment based on branch and workflow
+          if [[ "$BRANCH" == "main" ]] && [[ "$WORKFLOW_NAME" == *"Deployment Pipeline"* ]]; then
+            ENVIRONMENT="staging"
+          elif [[ "${{ github.event.deployment_status.environment }}" == "production" ]]; then
+            ENVIRONMENT="production"
+          elif [[ "$BRANCH" != "main" ]]; then
+            ENVIRONMENT="preview"
+          else
+            ENVIRONMENT="unknown"
+          fi
+          
+          # Determine notification level
+          if [[ "$ENVIRONMENT" == "production" ]]; then
+            NOTIFICATION_LEVEL="critical"
+          elif [[ "$ENVIRONMENT" == "staging" ]]; then
+            NOTIFICATION_LEVEL="important"
+          else
+            NOTIFICATION_LEVEL="info"
+          fi
+          
+          echo "workflow_name=$WORKFLOW_NAME" >> $GITHUB_OUTPUT
+          echo "conclusion=$CONCLUSION" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "notification_level=$NOTIFICATION_LEVEL" >> $GITHUB_OUTPUT
+
+      - name: Format deployment message
+        id: message
+        run: |
+          WORKFLOW_NAME="${{ steps.context.outputs.workflow_name }}"
+          CONCLUSION="${{ steps.context.outputs.conclusion }}"
+          BRANCH="${{ steps.context.outputs.branch }}"
+          ENVIRONMENT="${{ steps.context.outputs.environment }}"
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha }}"
+          RUN_URL="${{ github.event.workflow_run.html_url }}"
+          ACTOR="${{ github.event.workflow_run.triggering_actor.login }}"
+          
+          # Format status emoji and text
+          if [[ "$CONCLUSION" == "success" ]]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="succeeded"
+            COLOR="good"
+          elif [[ "$CONCLUSION" == "failure" ]]; then
+            STATUS_EMOJI="❌"
+            STATUS_TEXT="failed"
+            COLOR="danger"
+          else
+            STATUS_EMOJI="⚠️"
+            STATUS_TEXT="completed with issues"
+            COLOR="warning"
+          fi
+          
+          # Format environment emoji
+          case $ENVIRONMENT in
+            "production") ENV_EMOJI="🚀" ;;
+            "staging") ENV_EMOJI="🔧" ;;
+            "preview") ENV_EMOJI="👀" ;;
+            *) ENV_EMOJI="🔄" ;;
+          esac
+          
+          # Create message
+          TITLE="${ENV_EMOJI} ${ENVIRONMENT^} Deployment $STATUS_TEXT"
+          
+          MESSAGE="**Deployment Status**: $STATUS_EMOJI **$STATUS_TEXT**
+          **Environment**: $ENVIRONMENT
+          **Branch**: $BRANCH
+          **Commit**: \`${COMMIT_SHA:0:7}\`
+          **Triggered by**: $ACTOR
+          **Workflow**: $WORKFLOW_NAME
+          **View Details**: [Workflow Run]($RUN_URL)"
+          
+          # Format for different notification systems
+          SLACK_MESSAGE="{
+            \"text\": \"$TITLE\",
+            \"attachments\": [{
+              \"color\": \"$COLOR\",
+              \"fields\": [
+                {\"title\": \"Environment\", \"value\": \"$ENVIRONMENT\", \"short\": true},
+                {\"title\": \"Branch\", \"value\": \"$BRANCH\", \"short\": true},
+                {\"title\": \"Status\", \"value\": \"$STATUS_TEXT\", \"short\": true},
+                {\"title\": \"Commit\", \"value\": \"${COMMIT_SHA:0:7}\", \"short\": true}
+              ],
+              \"actions\": [{
+                \"type\": \"button\",
+                \"text\": \"View Workflow\",
+                \"url\": \"$RUN_URL\"
+              }]
+            }]
+          }"
+          
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "message<<EOF" >> $GITHUB_OUTPUT
+          echo "$MESSAGE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "slack_message<<EOF" >> $GITHUB_OUTPUT
+          echo "$SLACK_MESSAGE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "color=$COLOR" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub issue for failed production deployments
+        if: steps.context.outputs.environment == 'production' && steps.context.outputs.conclusion == 'failure'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const title = "🚨 Production Deployment Failure";
+            const body = `## Production Deployment Failed
+            
+            **Status**: ❌ Failed
+            **Environment**: Production
+            **Branch**: ${{ steps.context.outputs.branch }}
+            **Commit**: ${{ github.event.workflow_run.head_sha }}
+            **Workflow**: ${{ steps.context.outputs.workflow_name }}
+            **Triggered by**: ${{ github.event.workflow_run.triggering_actor.login }}
+            **Workflow Run**: ${{ github.event.workflow_run.html_url }}
+            
+            ## Immediate Actions Required
+            
+            - [ ] Investigate failure cause
+            - [ ] Determine if rollback is needed
+            - [ ] Notify stakeholders
+            - [ ] Update status page if needed
+            
+            ## Rollback Procedures
+            
+            If immediate rollback is needed:
+            1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
+            2. Select the last stable deployment
+            3. Promote to production
+            
+            Or use CLI:
+            \`\`\`bash
+            vercel rollback --prod
+            \`\`\`
+            
+            ---
+            *This issue was automatically created by the deployment notification system.*`;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['deployment', 'production', 'critical', 'incident']
+            });
+
+      - name: Update deployment status in PR
+        if: steps.context.outputs.environment == 'preview'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const conclusion = "${{ steps.context.outputs.conclusion }}";
+            const workflowUrl = "${{ github.event.workflow_run.html_url }}";
+            
+            // Find the PR associated with this branch
+            const prs = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${{ steps.context.outputs.branch }}`,
+              state: 'open'
+            });
+            
+            if (prs.data.length === 0) return;
+            
+            const pr = prs.data[0];
+            const status = conclusion === 'success' ? '✅ Deployed' : '❌ Failed';
+            
+            const comment = `## 📦 Deployment Update
+            
+            **Status**: ${status}
+            **Environment**: Preview
+            **Workflow**: [View Details](${workflowUrl})
+            
+            ${conclusion === 'success' 
+              ? 'Preview environment has been updated with your changes.' 
+              : 'Deployment failed. Please check the workflow logs for details.'}`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: comment
+            });
+
+      - name: Send Slack notification (if configured)
+        if: env.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '${{ steps.message.outputs.slack_message }}' \
+            "$SLACK_WEBHOOK_URL"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Send email notification for critical failures
+        if: steps.context.outputs.environment == 'production' && steps.context.outputs.conclusion == 'failure'
+        run: |
+          echo "Subject: 🚨 Production Deployment Failure - Immediate Action Required" > email.txt
+          echo "To: ${{ secrets.ONCALL_EMAIL }}" >> email.txt
+          echo "From: deployments@yourdomain.com" >> email.txt
+          echo "" >> email.txt
+          echo "${{ steps.message.outputs.message }}" >> email.txt
+          echo "" >> email.txt
+          echo "Immediate rollback may be required. Check the status page and user reports." >> email.txt
+          echo "Workflow: ${{ github.event.workflow_run.html_url }}" >> email.txt
+          
+          # Note: This would require email service configuration
+          echo "Email notification prepared (configure email service to send)"
+
+  deployment-health-check:
+    name: Post-Deployment Health Check
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    needs: notify-deployment-status
+    
+    steps:
+      - name: Determine deployment URL
+        id: url
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
+          
+          if [[ "$BRANCH" == "main" ]]; then
+            URL="https://staging.yourdomain.com"
+            ENVIRONMENT="staging"
+          else
+            # For preview deployments, we would need to get the URL from Vercel
+            URL="https://yourdomain.com"  # fallback to production for health check
+            ENVIRONMENT="production"
+          fi
+          
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Waiting 30 seconds for deployment to stabilize..."
+          sleep 30
+
+      - name: Run health checks
+        id: health
+        run: |
+          URL="${{ steps.url.outputs.url }}"
+          HEALTH_URL="$URL/api/health"
+          
+          echo "Running health check against: $HEALTH_URL"
+          
+          # Try health check with retries
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -s "$HEALTH_URL" > health_response.json; then
+              echo "✅ Health check passed"
+              
+              # Parse health check response
+              STATUS=$(cat health_response.json | jq -r '.status')
+              CHECKS_TOTAL=$(cat health_response.json | jq -r '.summary.total')
+              CHECKS_HEALTHY=$(cat health_response.json | jq -r '.summary.healthy')
+              
+              echo "status=$STATUS" >> $GITHUB_OUTPUT
+              echo "checks_total=$CHECKS_TOTAL" >> $GITHUB_OUTPUT
+              echo "checks_healthy=$CHECKS_HEALTHY" >> $GITHUB_OUTPUT
+              echo "success=true" >> $GITHUB_OUTPUT
+              
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "❌ Health check failed (attempt $RETRY_COUNT/$MAX_RETRIES)"
+              
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Retrying in 15 seconds..."
+                sleep 15
+              else
+                echo "success=false" >> $GITHUB_OUTPUT
+                echo "status=failed" >> $GITHUB_OUTPUT
+              fi
+            fi
+          done
+
+      - name: Report health check results
+        run: |
+          SUCCESS="${{ steps.health.outputs.success }}"
+          STATUS="${{ steps.health.outputs.status }}"
+          ENVIRONMENT="${{ steps.url.outputs.environment }}"
+          
+          if [[ "$SUCCESS" == "true" ]]; then
+            echo "## ✅ Post-Deployment Health Check Passed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment**: $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: $STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Healthy Checks**: ${{ steps.health.outputs.checks_healthy }}/${{ steps.health.outputs.checks_total }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **URL**: ${{ steps.url.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Post-Deployment Health Check Failed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment**: $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: Failed to reach health endpoint" >> $GITHUB_STEP_SUMMARY
+            echo "- **URL**: ${{ steps.url.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Action Required**: Investigate deployment and consider rollback" >> $GITHUB_STEP_SUMMARY
+            
+            # Exit with failure for critical environments
+            if [[ "$ENVIRONMENT" == "production" ]]; then
+              exit 1
+            fi
+          fi
+
+      - name: Create follow-up issue for failed health checks
+        if: steps.health.outputs.success != 'true' && steps.url.outputs.environment == 'production'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const title = "⚠️ Post-Deployment Health Check Failed";
+            const environment = "${{ steps.url.outputs.environment }}";
+            const url = "${{ steps.url.outputs.url }}";
+            
+            const body = `## Health Check Failure
+            
+            The post-deployment health check failed for the ${environment} environment.
+            
+            **Environment**: ${environment}
+            **URL**: ${url}
+            **Health Endpoint**: ${url}/api/health
+            **Deployment**: ${{ github.event.workflow_run.html_url }}
+            
+            ## Investigation Steps
+            
+            - [ ] Check application logs
+            - [ ] Verify all services are running
+            - [ ] Test critical functionality manually
+            - [ ] Check database connectivity
+            - [ ] Review recent configuration changes
+            
+            ## If Issues Persist
+            
+            Consider rolling back to the previous stable deployment:
+            
+            \`\`\`bash
+            vercel rollback --prod --token=$VERCEL_TOKEN
+            \`\`\`
+            
+            ---
+            *This issue was automatically created by the post-deployment health check system.*`;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['deployment', environment, 'health-check', 'investigation-needed']
+            });

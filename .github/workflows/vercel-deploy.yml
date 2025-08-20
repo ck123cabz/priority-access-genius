@@ -1,0 +1,102 @@
+name: Vercel Deployment
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: '9'
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter db generate
+
+      - name: Pull Vercel environment information
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project artifacts
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel (Preview)
+        if: github.event_name == 'pull_request'
+        run: |
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "Preview deployment: $DEPLOYMENT_URL"
+          echo "DEPLOYMENT_URL=$DEPLOYMENT_URL" >> $GITHUB_ENV
+
+      - name: Deploy to Vercel (Production)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          DEPLOYMENT_URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "Production deployment: $DEPLOYMENT_URL"
+          echo "DEPLOYMENT_URL=$DEPLOYMENT_URL" >> $GITHUB_ENV
+
+      - name: Comment PR with preview URL
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deploymentUrl = process.env.DEPLOYMENT_URL;
+            if (deploymentUrl) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `🚀 **Preview deployment is ready!**\n\n✅ Preview: ${deploymentUrl}\n\nBuilt from commit: ${context.sha.slice(0, 7)}`
+              });
+            }
+
+      - name: Update deployment status
+        if: always()
+        run: |
+          echo "## Vercel Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "- **Type:** Preview deployment" >> $GITHUB_STEP_SUMMARY
+            echo "- **URL:** ${{ env.DEPLOYMENT_URL }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Type:** Production deployment" >> $GITHUB_STEP_SUMMARY
+            echo "- **URL:** ${{ env.DEPLOYMENT_URL }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
