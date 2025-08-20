@@ -2,19 +2,22 @@
 
 ```
 model Client {
-  id           String       @id @default(uuid())
-  company_name String
-  contact_name String
-  email        String
-  role_title   String
-  notes        String?
-  logo_url     String?
-  status       String       @default("pending")
-  created_by   String
-  created_at   DateTime     @default(now())
-  updated_at   DateTime     @updatedAt
-  agreements   Agreement[]
-  audit_events AuditEvent[]
+  id                String       @id @default(uuid())
+  company_name      String
+  contact_name      String
+  email             String
+  role_title        String
+  notes             String?
+  logo_url          String?
+  status            String       @default("pending")
+  activation_token  String?      @unique
+  token_expires_at  DateTime?
+  token_expiry_hours Int         @default(24)
+  created_by        String
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  agreements        Agreement[]
+  audit_events      AuditEvent[]
 }
 
 model Agreement {

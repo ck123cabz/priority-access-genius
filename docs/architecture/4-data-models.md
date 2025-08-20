@@ -43,6 +43,9 @@ interface Client {
   notes: string | null;
   logo_url: string | null;
   status: 'pending' | 'activated';
+  activation_token: string | null;        // Unique token for activation URL
+  token_expires_at: Date | null;          // Token expiration timestamp
+  token_expiry_hours: number;             // Configurable expiry period (defaults to 24)
   created_by: string;
   created_at: Date;
   updated_at: Date;

@@ -193,7 +193,7 @@ The following technology stack is prescribed and must be adhered to:
         
     - **AC:** After successful client creation, a unique token is generated. The full activation URL is displayed to the operator with a "copy-to-clipboard" button.
         
-    - **<font color="blue">AC Addition:</font>** The activation token is generated using `crypto.randomUUID()`, stored in the `clients` table, and includes a 24-hour expiry mechanism.
+    - **<font color="blue">AC Addition:</font>** The activation token is generated using `crypto.randomUUID()`, stored in the `clients` table, and includes a configurable expiry mechanism (defaulting to 24 hours).
         
 - **Story 1.7: Real-time Dashboard Updates**
     

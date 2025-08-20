@@ -133,7 +133,7 @@
         
 - **<font color="green">NEW STORY (Resolves PO Checklist CRITICAL #3)</font>**
     
-    - **Story 2.7: User Documentation & Help System**
+- **Story 2.7: User Documentation & Help System**
         
     - As a user (both client and operator), I want clear documentation and help when I encounter issues, so that I can successfully complete my tasks without external support.
         
