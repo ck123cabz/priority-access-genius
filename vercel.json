@@ -7,7 +7,7 @@
   "framework": "nextjs",
   "regions": ["iad1"],
   "functions": {
-    "apps/web/app/api/**/*.ts": {
+    "apps/web/src/app/api/**/*.ts": {
       "maxDuration": 30
     }
   },
