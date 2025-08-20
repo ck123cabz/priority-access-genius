@@ -42,6 +42,13 @@ Environment variables are securely managed across different environments:
 | `NEXTAUTH_SECRET` | NextAuth session encryption key | Yes | All | **SECRET** |
 | `NEXTAUTH_URL` | Application base URL | Yes | All | Public |
 
+### Domain Configuration
+
+| Variable | Description | Required | Environment | Example |
+|----------|-------------|----------|-------------|---------|
+| `NEXT_PUBLIC_APP_URL` | Application URL | Yes | All | `https://geniuspriorityaccess.com` |
+| `NEXT_PUBLIC_ENVIRONMENT` | Environment name | Yes | All | `production`, `staging`, `development` |
+
 ### Feature Flags
 
 | Variable | Description | Required | Environment | Default |
